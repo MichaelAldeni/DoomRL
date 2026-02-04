@@ -7,6 +7,7 @@ from A3C import DoomA3C
 from Optim import SharedAdam
 from Env import create_doom_env, del_doom_env
 from tqdm import tqdm
+from ICM import ICM
 
 if __name__ == '__main__':
     # Fix for Windows specific multiprocessing issues
@@ -27,7 +28,12 @@ if __name__ == '__main__':
     global_model = DoomA3C(input_shape, num_actions)
     global_model.share_memory()
 
+    global_icm = ICM(input_shape, num_actions)
+    global_icm.share_memory()
+
     optimizer = SharedAdam(global_model.parameters(), lr=lr)
+    icm_optimizer = SharedAdam(global_icm.parameters(), lr=lr)
+
     global_ep_counter = mp.Value('i', 0)
     lock = mp.Lock()
 
@@ -40,7 +46,9 @@ if __name__ == '__main__':
     print(f"Starting training with {num_processes} workers...")
 
     for rank in range(num_processes):
-        p = Worker(global_model, optimizer, global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP)
+        p = Worker(global_model, optimizer, global_icm, icm_optimizer, 
+                   global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP)
+
         p.start()
         processes.append(p)
 
