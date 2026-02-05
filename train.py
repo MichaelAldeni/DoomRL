@@ -19,7 +19,7 @@ if __name__ == '__main__':
     # Create a temporary env ONLY to get dimensions, then delete it immediately
     temp_env = create_doom_env()
     input_shape = 1 
-    num_actions = 3
+    num_actions = 7
     # IMPORTANT: Close the temp env explicitly before spawning workers
     # If using raw DoomGame: temp_env.close() 
     # If using wrapper: temp_env.game.close()

@@ -29,7 +29,7 @@ class Worker(mp.Process):
         # WE DO NOT CREATE THE ENV HERE
         # self.env = create_doom_env()  <-- This caused the error!
         
-        self.local_model = DoomA3C(num_inputs=1, action_space=3)
+        self.local_model = DoomA3C(num_inputs=1, action_space=7)
         self.gamma = 0.99
         self.t_max = 20
 
@@ -135,7 +135,7 @@ class Worker(mp.Process):
                                 os.makedirs('checkpoints')
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
-                            print(f"Saved model to {save_path}")
+                            print(f"\nSaved model to {save_path}")
 
                         #if self.global_ep.value % 10 == 0:
                         #    print(f"Episode {self.global_ep.value} | Worker {self.name} | Steps: {episode_step}")

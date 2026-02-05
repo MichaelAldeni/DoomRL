@@ -7,9 +7,9 @@ from vizdoom import DoomGame, ScreenFormat, ScreenResolution, Mode
 from A3C import DoomA3C
 
 # --- Configuration ---
-MODEL_PATH = "checkpoints/doom_a3c_ep1000.pth"  # <--- CHANGE THIS to your actual file
+MODEL_PATH = "checkpoints/doom_a3c_ep1800.pth"  # <--- CHANGE THIS to your actual file
 CONFIG_PATH = "speedrun.cfg"           # The config you created earlier
-WAD_PATH = "DOOM.wad"                       # Standard VizDoom wad
+WAD_PATH = "doom.wad"                       # Standard VizDoom wad
 EPISODES_TO_WATCH = 5
 FRAME_REPEAT = 4
 
@@ -20,13 +20,14 @@ def preprocess(img):
     """
     img = cv2.resize(img, (42, 42))
     img = img.astype(np.float32) / 255.0
-    return img
+    # Add channel dimension: (42, 42) -> (1, 42, 42)
+    return img[np.newaxis, :, :]
 
 def get_action(model, state, hidden_state, deterministic=True):
     """
     Pass state through model and decide action.
     """
-    state_tensor = torch.from_numpy(state).float().unsqueeze(0).unsqueeze(0)
+    state_tensor = torch.from_numpy(state).float().unsqueeze(0)
     
     with torch.no_grad():
         _, logit, (hx, cx) = model(state_tensor, hidden_state)
@@ -40,6 +41,9 @@ def get_action(model, state, hidden_state, deterministic=True):
         # Random action based on probability (Stochastic)
         action_idx = probs.multinomial(num_samples=1).item()
         
+    actions = ["Left", "Right", "Shoot", "Forward", "Backward", "Turn Left", "Turn Right"]
+    print(f"Chosen Action: {actions[action_idx]} | Probabilities: {probs.squeeze().numpy()}")
+    
     return action_idx, (hx, cx)
 
 def main():
@@ -62,7 +66,7 @@ def main():
 
     # 2. Load Model
     # 1 input channel (Grayscale), 3 actions (Left, Right, Shoot)
-    model = DoomA3C(num_inputs=1, action_space=3)
+    model = DoomA3C(num_inputs=1, action_space=7)
     
     # Load weights
     try:
@@ -79,7 +83,7 @@ def main():
         return
 
     # Action definition (Identity matrix for One-Hot)
-    actions = np.eye(3, dtype=np.uint8).tolist()
+    actions = np.eye(7, dtype=np.uint8).tolist()
 
     # 3. Game Loop
     for ep in range(EPISODES_TO_WATCH):

@@ -31,7 +31,7 @@ class DoomEnvWrapper:
         self.game = game
         self.frame_skip = int(frame_skip)
         # Left, Right, Shoot
-        self.actions = np.eye(3, dtype=np.uint8).tolist()
+        self.actions = np.eye(7, dtype=np.uint8).tolist()
 
         # E1M1 Exit Switch Coordinates (approximate)
         self.GOAL_X = 2955.0
@@ -51,7 +51,8 @@ class DoomEnvWrapper:
     def step(self, action_idx):
         # 1. Execute Action
         # Repeat the chosen action for `self.frame_skip` frames to speed up training
-        self.game.make_action(self.actions[action_idx], self.frame_skip)
+        # Capture the reward from VizDoom (includes living_reward and death_penalty from config)
+        vizdoom_reward = self.game.make_action(self.actions[action_idx], self.frame_skip)
         
         # 2. Get Game State
         done = self.game.is_episode_finished()
@@ -96,6 +97,9 @@ class DoomEnvWrapper:
         #    reward += 1.0 # Bonus for finding a new area
         #    self.visited_sectors.add(sector_hash)
 
+        # D. Add VizDoom's native rewards (living_reward, death_penalty, etc.)
+        reward += vizdoom_reward
+
         # Update previous values for next step
         self.prev_x = curr_x
         self.prev_y = curr_y
@@ -120,4 +124,5 @@ class DoomEnvWrapper:
     def preprocess(self, img):
         img = cv2.resize(img, (42, 42))
         img = img.astype(np.float32) / 255.0
-        return img
+        # Add channel dimension: (42, 42) -> (1, 42, 42)
+        return img[np.newaxis, :, :]
