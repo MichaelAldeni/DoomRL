@@ -3,11 +3,11 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import cv2
-from vizdoom import DoomGame, ScreenFormat, ScreenResolution, Mode
+from vizdoom import DoomGame, ScreenFormat, ScreenResolution, Mode, GameVariable
 from A3C import DoomA3C
 
 # --- Configuration ---
-MODEL_PATH = "checkpoints/doom_a3c_ep1800.pth"  # <--- CHANGE THIS to your actual file
+MODEL_PATH = "checkpoints/doom_a3c_ep200.pth"  # <--- CHANGE THIS to your actual file
 CONFIG_PATH = "speedrun.cfg"           # The config you created earlier
 WAD_PATH = "doom.wad"                       # Standard VizDoom wad
 EPISODES_TO_WATCH = 5
@@ -41,9 +41,9 @@ def get_action(model, state, hidden_state, deterministic=True):
         # Random action based on probability (Stochastic)
         action_idx = probs.multinomial(num_samples=1).item()
         
-    actions = ["Left", "Right", "Shoot", "Forward", "Backward", "Turn Left", "Turn Right"]
+    actions = ["Left", "Right", "Shoot", "Forward", "Backward", "Turn Left", "Turn Right", "Use"]
     print(f"Chosen Action: {actions[action_idx]} | Probabilities: {probs.squeeze().numpy()}")
-    
+
     return action_idx, (hx, cx)
 
 def main():
@@ -65,8 +65,8 @@ def main():
     game.init()
 
     # 2. Load Model
-    # 1 input channel (Grayscale), 3 actions (Left, Right, Shoot)
-    model = DoomA3C(num_inputs=1, action_space=7)
+    # 1 input channel (Grayscale), 8 actions (Left, Right, Shoot, Forward, Backward, Turn Left, Turn Right, Use)
+    model = DoomA3C(num_inputs=1, action_space=8)
     
     # Load weights
     try:
@@ -83,7 +83,7 @@ def main():
         return
 
     # Action definition (Identity matrix for One-Hot)
-    actions = np.eye(7, dtype=np.uint8).tolist()
+    actions = np.eye(8, dtype=np.uint8).tolist()
 
     # 3. Game Loop
     for ep in range(EPISODES_TO_WATCH):
@@ -100,6 +100,9 @@ def main():
             # Get State
             state_raw = game.get_state().screen_buffer
             state = preprocess(state_raw)
+
+            coords = game.get_game_variable(GameVariable.POSITION_X), game.get_game_variable(GameVariable.POSITION_Y)
+            #print(f"Step: {step} | Coordinates: X={coords[0]:.1f}, Y={coords[1]:.1f} | Total Reward: {total_reward:.2f}")
             
             # Get Action
             action_idx, (hx, cx) = get_action(model, state, (hx, cx))

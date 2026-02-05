@@ -21,7 +21,7 @@ class Worker(mp.Process):
         # Shared ICM model and optimizer
         self.global_icm = global_icm
         self.icm_optimizer = icm_optimizer
-        self.local_icm = ICM(num_inputs=1, action_space=3)
+        self.local_icm = ICM(num_inputs=1, action_space=8)
 
         self.lock = lock
         self.frame_skip = int(frame_skip)
@@ -29,13 +29,15 @@ class Worker(mp.Process):
         # WE DO NOT CREATE THE ENV HERE
         # self.env = create_doom_env()  <-- This caused the error!
         
-        self.local_model = DoomA3C(num_inputs=1, action_space=7)
+        self.local_model = DoomA3C(num_inputs=1, action_space=8)
         self.gamma = 0.99
         self.t_max = 20
 
         self.beta = 0.2  # Weight for forward model loss (curiosity)
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.01  # Scale factor for instrinsic reward
+        self.eta = 0.01  # Scale factor for intrinsic reward
+        self.entropy_coef = 0.01  # Entropy coefficient (increased for more exploration)
+        self.max_grad_norm = 40.0  # Gradient clipping threshold
 
     def run(self):
         # Try to set CPU affinity for this worker (optional). Uses psutil if available.
@@ -95,7 +97,7 @@ class Worker(mp.Process):
                 next_state = torch.from_numpy(next_state_np).float().unsqueeze(0)
 
                 # ICM intrinsic reward calculation
-                action_one_hot = torch.zeros(1, 3)
+                action_one_hot = torch.zeros(1, 8)
                 action_one_hot[0, action.item()] = 1.0
 
                 with torch.no_grad():
@@ -131,8 +133,6 @@ class Worker(mp.Process):
                         self.global_ep.value += 1
                         
                         if self.global_ep.value % 100 == 0:
-                            if not os.path.exists('checkpoints'):
-                                os.makedirs('checkpoints')
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
                             print(f"\nSaved model to {save_path}")

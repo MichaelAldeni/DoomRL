@@ -31,14 +31,22 @@ class DoomEnvWrapper:
         self.game = game
         self.frame_skip = int(frame_skip)
         # Left, Right, Shoot
-        self.actions = np.eye(7, dtype=np.uint8).tolist()
+        self.actions = np.eye(8, dtype=np.uint8).tolist()
 
         # E1M1 Exit Switch Coordinates (approximate)
         self.GOAL_X = 2955.0
         self.GOAL_Y = -4772.0
         
         # Exploration tracking
-        #self.visited_sectors = set()
+        # Format: (Min_X, Min_Y, Max_X, Max_Y, Reward_Value)
+        # Coordinates below are examples for E1M1. You can find yours by printing curr_x/y.
+        self.checkpoints = [
+            # Example: The hallway after the first door in E1M1
+            {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 50.0},
+            # Example: The Zig-Zag room
+            {'id': 2, 'coords': (2944, -4160, 3072, -4032), 'reward': 50.0}
+        ]
+        self.visited_zones = set()
         
         # State tracking for reward calculation
         self.prev_x = 0
@@ -85,17 +93,23 @@ class DoomEnvWrapper:
         # Calculate distance traveled this step
         travel_dist = np.sqrt((curr_x - self.prev_x)**2 + (curr_y - self.prev_y)**2)
         if travel_dist > 0.5: # Filter jitter
-             reward += travel_dist * 0.001
+             reward += travel_dist * 0.01
         
-        # C. Exploration (Breadcrumbs)
-        # We hash coordinates to 100-unit blocks
-        sector_x = int(curr_x // 100)
-        sector_y = int(curr_y // 100)
-        sector_hash = (sector_x, sector_y)
+        # Penalty for turning (actions 5, 6) without moving - prevents ICM exploiting visual novelty from spinning
+        if action_idx in (2, 5, 6, 7) and travel_dist < 1.0:
+            reward -= 0.1
         
-        #if sector_hash not in self.visited_sectors:
-        #    reward += 1.0 # Bonus for finding a new area
-        #    self.visited_sectors.add(sector_hash)
+        # C. Exploration (Checkpoints)
+        # --- A. SECTION REWARDS (One-time Bonus) ---
+        for zone in self.checkpoints:
+            z_id = zone['id']
+            if z_id not in self.visited_zones:
+                x1, y1, x2, y2 = zone['coords']
+                # Check if inside the bounding box (use min/max to handle any coordinate order)
+                if min(x1, x2) <= curr_x <= max(x1, x2) and min(y1, y2) <= curr_y <= max(y1, y2):
+                    reward += zone['reward']
+                    self.visited_zones.add(z_id)
+                    print(f"Reached Checkpoint {z_id}!")
 
         # D. Add VizDoom's native rewards (living_reward, death_penalty, etc.)
         reward += vizdoom_reward
@@ -112,7 +126,7 @@ class DoomEnvWrapper:
 
     def reset(self):
         self.game.new_episode()
-        #self.visited_sectors.clear()
+        self.visited_zones.clear()  # Reset checkpoint tracking each episode
         
         # Initialize coordinates
         self.prev_x = self.game.get_game_variable(GameVariable.POSITION_X)

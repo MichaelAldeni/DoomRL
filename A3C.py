@@ -20,7 +20,8 @@ def weights_init(m):
     if classname.find('Conv') != -1:
         weight_shape = list(m.weight.data.size())
         fan_in = np.prod(weight_shape[1:4])
-        fan_out = np.prod(weight_shape[0:2]) * weight_shape[3]
+        # weight_shape is [out_channels, in_channels, kernel_h, kernel_w]
+        fan_out = weight_shape[0] * weight_shape[2] * weight_shape[3]
         w_bound = np.sqrt(6. / (fan_in + fan_out))
         m.weight.data.uniform_(-w_bound, w_bound)
         m.bias.data.fill_(0)
