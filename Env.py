@@ -86,18 +86,18 @@ class DoomEnvWrapper:
         # A. Goal Homing (Shaping Reward)
         # Reward = Improvement in distance. 
         # If we got closer: positive. If we moved away: negative.
-        dist_improvement = (self.prev_dist - curr_dist)
-        reward += dist_improvement * 1.0 
+        #dist_improvement = (self.prev_dist - curr_dist)
+        #reward += dist_improvement * 1.0 
         
         # B. Velocity (Encourage Movement)
         # Calculate distance traveled this step
-        travel_dist = np.sqrt((curr_x - self.prev_x)**2 + (curr_y - self.prev_y)**2)
-        if travel_dist > 0.5: # Filter jitter
-             reward += travel_dist * 0.01
+        #travel_dist = np.sqrt((curr_x - self.prev_x)**2 + (curr_y - self.prev_y)**2)
+        #if travel_dist > 0.5: # Filter jitter
+        #     reward += travel_dist * 0.01
         
         # Penalty for turning (actions 5, 6) without moving - prevents ICM exploiting visual novelty from spinning
-        if action_idx in (2, 5, 6, 7) and travel_dist < 1.0:
-            reward -= 0.1
+        #if action_idx in (2, 5, 6, 7) and travel_dist < 1.0:
+        #    reward -= 0.1
         
         # C. Exploration (Checkpoints)
         # --- A. SECTION REWARDS (One-time Bonus) ---
@@ -109,7 +109,7 @@ class DoomEnvWrapper:
                 if min(x1, x2) <= curr_x <= max(x1, x2) and min(y1, y2) <= curr_y <= max(y1, y2):
                     reward += zone['reward']
                     self.visited_zones.add(z_id)
-                    print(f"Reached Checkpoint {z_id}!")
+                    print(f"\nReached Checkpoint {z_id}!")
 
         # D. Add VizDoom's native rewards (living_reward, death_penalty, etc.)
         reward += vizdoom_reward

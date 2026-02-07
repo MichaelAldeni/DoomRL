@@ -26,21 +26,17 @@ class Worker(mp.Process):
         self.lock = lock
         self.frame_skip = int(frame_skip)
         
-        # WE DO NOT CREATE THE ENV HERE
-        # self.env = create_doom_env()  <-- This caused the error!
-        
         self.local_model = DoomA3C(num_inputs=1, action_space=8)
         self.gamma = 0.99
         self.t_max = 20
 
         self.beta = 0.2  # Weight for forward model loss (curiosity)
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.01  # Scale factor for intrinsic reward
-        self.entropy_coef = 0.01  # Entropy coefficient (increased for more exploration)
+        self.eta = 0.05  # Scale factor for intrinsic reward
+        self.entropy_coef = 0.05  # Entropy coefficient (increased for more exploration)
         self.max_grad_norm = 40.0  # Gradient clipping threshold
 
     def run(self):
-        # Try to set CPU affinity for this worker (optional). Uses psutil if available.
         try:
             import psutil
             cpu_count = os.cpu_count() or 1
@@ -52,12 +48,10 @@ class Worker(mp.Process):
             p = psutil.Process()
             p.cpu_affinity([core])
         except Exception:
-            # psutil not available or affinity not supported on this platform
             pass
 
         self.env = create_doom_env(self.frame_skip)
         
-        # 1. Rename this to 'worker_step' to avoid confusion
         worker_step = 1 
         
         hx = torch.zeros(1, 256)
@@ -66,8 +60,10 @@ class Worker(mp.Process):
         state = self.env.reset()
         state = torch.from_numpy(state).float().unsqueeze(0)
         
-        # 2. Initialize a local episode counter
         episode_step = 0
+
+        # Track action distribution for the current episode across multiple t_max chunks
+        action_counts = [0] * 8  # For tracking action distribution in this episode
 
         while self.global_ep.value <= 5000:
                 
@@ -92,6 +88,7 @@ class Worker(mp.Process):
                 probs = F.softmax(logit, dim=1)
                 m = Categorical(probs)
                 action = m.sample()
+                #print(f"Worker {self.name} Step {worker_step} | Action: {action.item()} | Probabilities: {probs.squeeze().detach().cpu().numpy()}")
                 
                 next_state_np, extrinsic_reward, done = self.env.step(action.item())
                 next_state = torch.from_numpy(next_state_np).float().unsqueeze(0)
@@ -112,16 +109,19 @@ class Worker(mp.Process):
                 icm_states.append(state)
                 icm_next_states.append(next_state)
                 icm_actions_onehot.append(action_one_hot)
-                icm_actions_indices.append(action)
+                # store action as a 1-d tensor so torch.cat produces a proper target vector
+                icm_actions_indices.append(action.unsqueeze(0))
 
                 values.append(value)
                 log_probs.append(m.log_prob(action))
                 rewards.append(total_reward)
                 entropies.append(m.entropy())
                 
+                
                 # 3. Increment counters
                 worker_step += 1
                 episode_step += 1
+                action_counts[action.item()] += 1
                 
                 # 4. FIX: Use 'episode_step' for the timeout check
                 # If the agent gets stuck in a loop for 2000 steps, kill the episode.
@@ -136,17 +136,21 @@ class Worker(mp.Process):
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
                             print(f"\nSaved model to {save_path}")
-
-                        #if self.global_ep.value % 10 == 0:
-                        #    print(f"Episode {self.global_ep.value} | Worker {self.name} | Steps: {episode_step}")
+                        
+                        # Print action distribution every 50 episodes to detect collapse
+                        if self.global_ep.value % 50 == 0:
+                            action_names = ["Left", "Right", "Shoot", "Forward", "Back", "TurnL", "TurnR", "Use"]
+                            action_dist = {action_names[i]: action_counts[i] for i in range(8)}
+                            print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
                     
                     state = self.env.reset()
                     state = torch.from_numpy(state).float().unsqueeze(0)
                     hx = torch.zeros(1, 256)
                     cx = torch.zeros(1, 256)
                     
-                    # 5. RESET the episode counter!
+                    # 5. RESET the episode counter and action counts!
                     episode_step = 0
+                    action_counts = [0] * 8
                     break
                 else:
                     state = next_state
@@ -179,13 +183,14 @@ class Worker(mp.Process):
             forward_loss = 0.5 * F.mse_loss(pred_feat, real_feat.detach(), reduction='sum') / len(rewards)
 
             # 2. Inverse Loss
-            inverse_loss = F.cross_entropy(pred_action_logits, batch_action_indices.squeeze(), reduction='mean')
-            icm_loss = (self.beta * forward_loss) + ((1 - self.beta) * inverse_loss) * self.lambda_icm
+            inverse_loss = F.cross_entropy(pred_action_logits, batch_action_indices.view(-1), reduction='mean')
+            icm_loss = ((self.beta * forward_loss) + ((1 - self.beta) * inverse_loss)) * self.lambda_icm
             
             # Backpropagate combined loss
             self.optimizer.zero_grad()
-            a3c_loss = policy_loss + 0.5 * value_loss - 0.01 * sum(entropies)
+            a3c_loss = policy_loss + 0.5 * value_loss - self.entropy_coef * sum(entropies)
             a3c_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)
             
             for local_param, global_param in zip(self.local_model.parameters(), self.global_model.parameters()):
                 if global_param.grad is None:
@@ -196,6 +201,7 @@ class Worker(mp.Process):
 
             self.icm_optimizer.zero_grad()
             icm_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.local_icm.parameters(), self.max_grad_norm)
             
             for local_param, global_param in zip(self.local_icm.parameters(), self.global_icm.parameters()):
                  if global_param.grad is None:

@@ -7,7 +7,7 @@ from vizdoom import DoomGame, ScreenFormat, ScreenResolution, Mode, GameVariable
 from A3C import DoomA3C
 
 # --- Configuration ---
-MODEL_PATH = "checkpoints/doom_a3c_ep200.pth"  # <--- CHANGE THIS to your actual file
+MODEL_PATH = "checkpoints/doom_a3c_ep500.pth"  # <--- CHANGE THIS to your actual file
 CONFIG_PATH = "speedrun.cfg"           # The config you created earlier
 WAD_PATH = "doom.wad"                       # Standard VizDoom wad
 EPISODES_TO_WATCH = 5
@@ -23,7 +23,7 @@ def preprocess(img):
     # Add channel dimension: (42, 42) -> (1, 42, 42)
     return img[np.newaxis, :, :]
 
-def get_action(model, state, hidden_state, deterministic=True):
+def get_action(model, state, hidden_state, deterministic=False):
     """
     Pass state through model and decide action.
     """

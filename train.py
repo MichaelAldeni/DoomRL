@@ -14,14 +14,8 @@ if __name__ == '__main__':
     
     lr = 0.0001
     
-    # Create a temporary env ONLY to get dimensions, then delete it immediately
-    temp_env = create_doom_env()
     input_shape = 1 
     num_actions = 8
-    # IMPORTANT: Close the temp env explicitly before spawning workers
-    # If using raw DoomGame: temp_env.close() 
-    # If using wrapper: temp_env.game.close()
-    del_doom_env(temp_env)
 
     global_model = DoomA3C(input_shape, num_actions)
     global_model.share_memory()
