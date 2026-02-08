@@ -2,10 +2,6 @@ import torch
 import torch.optim as optim
 
 class SharedAdam(optim.Adam):
-    """
-    Standard Adam optimizer with shared states (momentum, variance) 
-    so that it works across multiple processes.
-    """
     def __init__(self, params, lr=1e-4, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
         super(SharedAdam, self).__init__(params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         

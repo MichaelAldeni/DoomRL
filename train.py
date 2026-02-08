@@ -1,9 +1,8 @@
 import os
 import torch.multiprocessing as mp
 from Worker import Worker
-from A3C import DoomA3C
+from A3C import A3C
 from Optim import SharedAdam
-from Env import create_doom_env, del_doom_env
 from tqdm import tqdm
 from ICM import ICM
 
@@ -13,11 +12,10 @@ if __name__ == '__main__':
     os.environ["OMP_NUM_THREADS"] = "1"
     
     lr = 0.0001
-    
     input_shape = 1 
     num_actions = 8
 
-    global_model = DoomA3C(input_shape, num_actions)
+    global_model = A3C(input_shape, num_actions)
     global_model.share_memory()
 
     global_icm = ICM(input_shape, num_actions)
@@ -30,21 +28,16 @@ if __name__ == '__main__':
     lock = mp.Lock()
 
     processes = []
-    # Reduce number of workers if on Windows to save memory/stability
     num_processes = os.cpu_count()
-    # Frames to repeat each action; increasing this reduces env frequency and speeds training
     FRAME_SKIP = 4
-
     print(f"Starting training with {num_processes} workers...")
-
     for rank in range(num_processes):
         p = Worker(global_model, optimizer, global_icm, icm_optimizer, 
                    global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP)
-
         p.start()
         processes.append(p)
 
-    # Main-process shared progress bar: update from the shared `global_ep_counter`
+    # Progress bar to track episodes completed
     pbar = tqdm(total=5000)
     prev = 0
     try:
@@ -54,7 +47,6 @@ if __name__ == '__main__':
             if cur > prev:
                 pbar.update(cur - prev)
                 prev = cur
-            #time.sleep(0.1)
     finally:
         pbar.close()
 
