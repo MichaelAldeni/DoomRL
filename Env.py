@@ -33,6 +33,10 @@ class DoomEnvWrapper:
         self.prev_x = 0
         self.prev_y = 0
         self.prev_dist = 0
+        self.health = 100
+        self.ammo = 50
+        self.kills = 0
+        self.hits = 0
         
     def _calc_dist(self, x, y):
         return np.sqrt((x - self.GOAL_X)**2 + (y - self.GOAL_Y)**2)
@@ -84,6 +88,27 @@ class DoomEnvWrapper:
                     self.visited_zones.add(z_id)
                     print(f"\nReached Checkpoint {z_id}!")
 
+        # Health and Ammo Rewards
+        health = self.game.get_game_variable(GameVariable.HEALTH)
+        ammo = self.game.get_game_variable(GameVariable.AMMO2)
+        if self.health > health:
+            reward -= (self.health - health) * 1.0
+            self.health = health
+        if self.ammo > ammo:
+            reward -= (self.ammo - ammo) * 0.05
+            self.ammo = ammo
+
+        # Kill and Hit Rewards
+        kill_count = self.game.get_game_variable(GameVariable.KILLCOUNT)
+        hit_count = self.game.get_game_variable(GameVariable.HITCOUNT)
+        if kill_count > self.kills:
+            reward += (kill_count - self.kills) * 10.0
+            self.kills = kill_count
+            print(f"\nThe agent got a kill! Total kills: {self.kills}")
+        if hit_count > self.hits:
+            reward += (hit_count - self.hits) * 0.5
+            self.hits = hit_count
+            
         # Environment rewards
         reward += vizdoom_reward
 
