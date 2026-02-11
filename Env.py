@@ -21,7 +21,7 @@ class DoomEnvWrapper:
     def __init__(self, game, frame_skip: int = 4):
         self.game = game
         self.frame_skip = int(frame_skip)
-        self.actions = np.eye(8, dtype=np.uint8).tolist()
+        self.actions = np.eye(7, dtype=np.uint8).tolist()
         
         # Frame Stacking (4 frames)
         self.buffer = deque(maxlen=4)
@@ -29,11 +29,12 @@ class DoomEnvWrapper:
 
         # E1M1 Checkpoints
         self.checkpoints = [
-            {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 100.0},
-            {'id': 2, 'coords': (2624, -2560, 2752, -2784), 'reward': 200.0},
-            {'id': 3, 'coords': (2912, -4864, 3104, -4672), 'reward': 300.0}
+            {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 100.0, 'target': (1616, -2496)},
+            {'id': 2, 'coords': (2624, -2560, 2752, -2784), 'reward': 200.0, 'target': (2688, -2672)},
+            {'id': 3, 'coords': (2912, -4864, 3104, -4672), 'reward': 300.0, 'target': (3008, -4768)}
         ]
         self.visited_zones = set()
+        self.prev_dist_to_goal = None
         
         # State tracking
         self.prev_x = 0
@@ -45,16 +46,19 @@ class DoomEnvWrapper:
     def step(self, action_idx):
         self.game.make_action(self.actions[action_idx], self.frame_skip)
         done = self.game.is_episode_finished()
-        
         if done:
             # Return stacked state of zeros
             state = np.zeros(self.input_shape, dtype=np.float32)
+            reward = 0.0
+            for _ in self.visited_zones:
+                reward += 10.0
+            
             if self.game.is_player_dead():
-                reward = -50.0
+                reward -= 50.0
             elif self.game.get_episode_time() >= self.game.get_episode_timeout():
-                reward = -5.0 # Timeout penalty
+                reward -= 5.0 # Timeout penalty
             else:
-                reward = 500.0 # Success
+                reward += 500.0 # Success
             # return last known game vars (normalized) to keep return signature consistent
             try:
                 health = float(self.health)
@@ -67,7 +71,9 @@ class DoomEnvWrapper:
             game_vars[0] /= 100.0
             game_vars[1] /= 50.0
 
-            return state, game_vars, reward, done
+            last_zone = max(self.visited_zones) if self.visited_zones else 0
+
+            return state, game_vars, reward, last_zone, done
             
         # Get raw frame and process
         frame = self.preprocess(self.game.get_state().screen_buffer)
@@ -82,44 +88,45 @@ class DoomEnvWrapper:
         
         # 1. REMOVED: Euclidean Distance Reward (It confuses the agent in mazes)
         
-        # 2. MOVEMENT REWARD (Slightly reduced)
+        # 2. MOVEMENT REWARD
         travel_dist = calculate_distance(curr_x, curr_y, self.prev_x, self.prev_y)
         if travel_dist > 5:
-            reward += travel_dist * 0.01
+            reward += travel_dist * 0.02
         else:
-            # 3. STUCK PENALTY (Crucial for "blocking under wall")
-            # If agent attempts to move/turn but distance is near zero
+            # 3. STUCK PENALTY
             if action_idx in [0, 1, 3]:
-                reward -= 0.1
+                reward -= 0.005
 
-        # 4. TURNING PENALTY (Discourage excessive turning, but allow it when necessary)
-        if action_idx in [5, 6]:
-            reward -= 0.05
+        # 4. TIME-STEP REWARD (small positive baseline)
+        reward += 0.005
+        
+        # 5. DIRECTIONAL GUIDANCE toward next checkpoint
+        if len(self.visited_zones) == 0:
+            # Guide to checkpoint 1
+            target_x, target_y = self.checkpoints[0]['target']
+            curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
+            if self.prev_dist_to_goal is not None:
+                improvement = self.prev_dist_to_goal - curr_dist
+                reward += improvement * 0.02  # Reward getting closer
+            self.prev_dist_to_goal = curr_dist
+        elif len(self.visited_zones) == 1:
+            # Guide to checkpoint 2
+            target_x, target_y = self.checkpoints[1]['target']
+            curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
+            if self.prev_dist_to_goal is not None:
+                improvement = self.prev_dist_to_goal - curr_dist
+                reward += improvement * 0.02
+            self.prev_dist_to_goal = curr_dist
+        elif len(self.visited_zones) == 2:
+            # Guide to checkpoint 3
+            target_x, target_y = self.checkpoints[2]['target']
+            curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
+            if self.prev_dist_to_goal is not None:
+                improvement = self.prev_dist_to_goal - curr_dist
+                reward += improvement * 0.02
+            self.prev_dist_to_goal = curr_dist
 
-        # 5. FORWARD BONUS (Encourage forward movement, but keep it small to prevent exploitation)
-        if action_idx == 3:
-            reward += 0.05
-
-        if 2 not in self.visited_zones:
-            # Guide to Second Door (Exit of large room)
-            dist = calculate_distance(curr_x, curr_y, 2624.0, -2656.0)
-                
-            if self.prev_dist_cp2 is None: self.prev_dist_cp2 = dist
-                
-            # We increase the reward slightly here because the room is larger
-            improvement = self.prev_dist_cp2 - dist
-            if improvement > 0:
-                reward += improvement * 0.01
-            self.prev_dist_cp2 = dist
-
-        # Living reward to encourage exploration and prevent camping in one spot, especially near the start
-        reward += 0.1
-
-        # 7. CHECKPOINTS
-        LOITER_PENALTY = -0.1
-
-        reward += LOITER_PENALTY * (3 - len(self.visited_zones))
-
+        # 6. CHECKPOINTS
         for zone in self.checkpoints:
             z_id = zone['id']
             x1, y1, x2, y2 = zone['coords']
@@ -128,27 +135,25 @@ class DoomEnvWrapper:
                 if z_id not in self.visited_zones:
                     reward += zone['reward']
                     self.visited_zones.add(z_id)
+                    self.prev_dist_to_goal = None  # Reset guidance
                     print(f"Reached Checkpoint {z_id}!")
 
-        # 5. AUXILIARY REWARDS (Health/Ammo/Kills)
-        # (Same as your original code)
+        # 7. AUXILIARY REWARDS
         health = self.game.get_game_variable(GameVariable.HEALTH)
         if self.health > health:
-            reward -= (self.health - health) * 0.1 # Reduced penalty to encourage boldness
+            reward -= (self.health - health) * 0.05
             self.health = health
 
-        if action_idx == 2: # Shoot action
-            ammo = self.game.get_game_variable(GameVariable.AMMO2) # Assuming ammo2 is for the pistol
+        if action_idx == 2:
+            ammo = self.game.get_game_variable(GameVariable.AMMO2)
             if self.ammo > ammo:
-                reward -= (self.ammo - ammo) * 0.1 # Small penalty for using ammo, encourages accuracy
+                reward -= (self.ammo - ammo) * 0.05
                 self.ammo = ammo
             
         kill_count = self.game.get_game_variable(GameVariable.KILLCOUNT)
         if kill_count > self.kills:
-            reward += 1.0 # Flat reward for kill is usually better than scaling
+            reward += 2.0
             self.kills = kill_count
-            
-        #reward += vizdoom_reward
         
         self.prev_x = curr_x
         self.prev_y = curr_y
@@ -161,7 +166,7 @@ class DoomEnvWrapper:
         game_vars[0] /= 100.0
         game_vars[1] /= 50.0
 
-        return state, game_vars, reward, done
+        return state, game_vars, reward, 0, done
 
     def reset(self):
         self.game.new_episode()
@@ -170,8 +175,7 @@ class DoomEnvWrapper:
         
         self.prev_x = self.game.get_game_variable(GameVariable.POSITION_X)
         self.prev_y = self.game.get_game_variable(GameVariable.POSITION_Y)
-        self.prev_dist_cp1 = None
-        self.prev_dist_cp2 = None   
+        self.prev_dist_to_goal = None   
         
         # Fill buffer with the first frame
         frame = self.preprocess(self.game.get_state().screen_buffer)

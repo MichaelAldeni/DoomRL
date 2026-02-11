@@ -1,3 +1,4 @@
+from time import sleep
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -38,7 +39,7 @@ class Worker(mp.Process):
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.1  # Scale factor for intrinsic reward
+        self.eta = 0.001  # Scale factor for intrinsic reward
         self.entropy_coef = 0.1  
         self.max_grad_norm = 40.0  # Gradient clipping threshold
         self.reward_clip = 100.0  # Clip per-step rewards to [-clip, +clip]
@@ -70,8 +71,10 @@ class Worker(mp.Process):
         game_vars_tensor = torch.from_numpy(game_vars).float().unsqueeze(0)
         
         episode_step = 0
-
-        action_counts = [0] * 8
+        episode_reward = 0
+        episode_extrinsic = 0
+        episode_intrinsic = 0
+        action_counts = [0] * 7
 
         while self.global_ep.value <= 5000:
                 
@@ -96,9 +99,8 @@ class Worker(mp.Process):
                 probs = F.softmax(logit, dim=1)
                 m = Categorical(probs)
                 action = m.sample()
-                #print(f"Worker {self.name} Step {worker_step} | Action: {action.item()} | Probabilities: {probs.squeeze().detach().cpu().numpy()}")
                 
-                next_state_np, next_game_vars, extrinsic_reward, done = self.env.step(action.item())
+                next_state_np, next_game_vars, extrinsic_reward, last, done = self.env.step(action.item())
                 next_state = torch.from_numpy(next_state_np).float().unsqueeze(0)
                 next_game_vars_tensor = torch.from_numpy(next_game_vars).float().unsqueeze(0)
 
@@ -114,6 +116,10 @@ class Worker(mp.Process):
 
                 # Total reward is extrinsic + intrinsic, clipped to prevent advantage spikes
                 total_reward = max(min(extrinsic_reward + intrinsic_reward, self.reward_clip), -self.reward_clip)
+                
+                # Track separately for logging
+                episode_extrinsic += extrinsic_reward
+                episode_intrinsic += intrinsic_reward
 
                 icm_states.append(state)
                 icm_next_states.append(next_state)
@@ -125,6 +131,10 @@ class Worker(mp.Process):
                 log_probs.append(m.log_prob(action))
                 rewards.append(total_reward)
                 entropies.append(m.entropy())
+                episode_reward += total_reward
+
+                #print(f"Step {episode_step} | Action: {action.item()} | Extrinsic: {extrinsic_reward:.2f} | Intrinsic: {intrinsic_reward:.2f} | Total: {total_reward:.2f}")
+                #sleep(0.01)  # Small sleep to slow down logging for readability
                 
                 worker_step += 1
                 episode_step += 1
@@ -134,7 +144,7 @@ class Worker(mp.Process):
                     with self.lock:
                         self.global_ep.value += 1
 
-                        print(f"\nWorker {self.name} | Episode {self.global_ep.value} | Steps: {episode_step} | Extrinsic Reward: {extrinsic_reward:.2f} | Intrinsic Reward: {intrinsic_reward:.2f} | Total Reward: {sum(rewards):.2f}")
+                        print(f"\nWorker {self.name} | Episode {self.global_ep.value} | Steps: {episode_step} | Last Zone: {last} | Extrinsic: {episode_extrinsic:.2f} | Intrinsic: {episode_intrinsic:.2f} | Total: {episode_reward:.2f}")
                         
                         if self.global_ep.value % 100 == 0:
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
@@ -154,6 +164,9 @@ class Worker(mp.Process):
                     cx = torch.zeros(1, 256)
                     
                     episode_step = 0
+                    episode_reward = 0
+                    episode_extrinsic = 0
+                    episode_intrinsic = 0
                     action_counts = [0] * 7
                     break
                 else:
@@ -170,6 +183,8 @@ class Worker(mp.Process):
             value_loss = 0
             
             # A3C Loss calculation
+            # Note: 'rewards' contains only the rewards from the current n_steps batch.
+            # Past rewards were handled in previous updates. Future rewards are approx by R(bootstrap).
             n_steps = len(rewards)
             for i in reversed(range(n_steps)):
                 R = rewards[i] + self.gamma * R
