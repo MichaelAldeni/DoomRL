@@ -1,4 +1,4 @@
-from vizdoom import DoomGame, GameVariable
+from vizdoom import DoomGame, GameVariable, ScreenResolution
 import numpy as np
 import cv2
 from collections import deque
@@ -9,9 +9,13 @@ def create_doom_env(frame_skip: int = 4, visible: bool = False):
 
     if visible:
         game.set_window_visible(True)
+        game.set_screen_resolution(ScreenResolution.RES_640X480)
 
     game.init()
     return DoomEnvWrapper(game, frame_skip)
+
+def calculate_distance(x1, y1, x2, y2):
+    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
 class DoomEnvWrapper:
     def __init__(self, game, frame_skip: int = 4):
@@ -21,12 +25,12 @@ class DoomEnvWrapper:
         
         # Frame Stacking (4 frames)
         self.buffer = deque(maxlen=4)
-        self.input_shape = (4, 84, 84)  # Increased resolution to 84x84
+        self.input_shape = (4, 42, 42)  # Increased resolution to 84x84
 
         # E1M1 Checkpoints
         self.checkpoints = [
             {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 100.0},
-            {'id': 2, 'coords': (2624, -2560, 2572, -2784), 'reward': 100.0},
+            {'id': 2, 'coords': (2624, -2560, 2752, -2784), 'reward': 200.0},
             {'id': 3, 'coords': (2912, -4864, 3104, -4672), 'reward': 300.0}
         ]
         self.visited_zones = set()
@@ -39,18 +43,18 @@ class DoomEnvWrapper:
         self.kills = 0
         
     def step(self, action_idx):
-        vizdoom_reward = self.game.make_action(self.actions[action_idx], self.frame_skip)
+        self.game.make_action(self.actions[action_idx], self.frame_skip)
         done = self.game.is_episode_finished()
         
         if done:
             # Return stacked state of zeros
             state = np.zeros(self.input_shape, dtype=np.float32)
             if self.game.is_player_dead():
-                reward = -5.0
+                reward = -50.0
             elif self.game.get_episode_time() >= self.game.get_episode_timeout():
-                reward = -2.0 # Timeout penalty
+                reward = -5.0 # Timeout penalty
             else:
-                reward = 100.0 # Success
+                reward = 500.0 # Success
             # return last known game vars (normalized) to keep return signature consistent
             try:
                 health = float(self.health)
@@ -63,7 +67,7 @@ class DoomEnvWrapper:
             game_vars[0] /= 100.0
             game_vars[1] /= 50.0
 
-            return state, game_vars, reward / 50, done
+            return state, game_vars, reward, done
             
         # Get raw frame and process
         frame = self.preprocess(self.game.get_state().screen_buffer)
@@ -79,9 +83,9 @@ class DoomEnvWrapper:
         # 1. REMOVED: Euclidean Distance Reward (It confuses the agent in mazes)
         
         # 2. MOVEMENT REWARD (Slightly reduced)
-        travel_dist = np.sqrt((curr_x - self.prev_x)**2 + (curr_y - self.prev_y)**2)
+        travel_dist = calculate_distance(curr_x, curr_y, self.prev_x, self.prev_y)
         if travel_dist > 5:
-            reward += travel_dist * 0.001
+            reward += travel_dist * 0.01
         else:
             # 3. STUCK PENALTY (Crucial for "blocking under wall")
             # If agent attempts to move/turn but distance is near zero
@@ -90,39 +94,31 @@ class DoomEnvWrapper:
 
         # 4. TURNING PENALTY (Discourage excessive turning, but allow it when necessary)
         if action_idx in [5, 6]:
-            reward -= 0.005
+            reward -= 0.05
 
         # 5. FORWARD BONUS (Encourage forward movement, but keep it small to prevent exploitation)
         if action_idx == 3:
-            reward += 0.005
+            reward += 0.05
 
-        # 6. COMPASS TO CHECKPOINT 1 (Guidance)
-        # Give a small shaping reward when the agent gets closer to checkpoint 1
-        if 1 not in self.visited_zones and 2 not in self.visited_zones:
-            # approximate target point near the first door/hallway
-            dist_to_cp1 = np.sqrt((curr_x - 1568.0)**2 + (curr_y - -2496.0)**2)
-
-            if self.prev_dist_cp1 is None: self.prev_dist_cp1 = dist_to_cp1
-
-            improvement = self.prev_dist_cp1 - dist_to_cp1
-            if improvement > 0:
-                reward += improvement * 0.001
-
-            self.prev_dist_cp1 = dist_to_cp1
-        elif 1 in self.visited_zones and 2 not in self.visited_zones:
+        if 2 not in self.visited_zones:
             # Guide to Second Door (Exit of large room)
-            dist = np.sqrt((curr_x - 2624)**2 + (curr_y - -2560)**2)
+            dist = calculate_distance(curr_x, curr_y, 2624.0, -2656.0)
                 
             if self.prev_dist_cp2 is None: self.prev_dist_cp2 = dist
                 
             # We increase the reward slightly here because the room is larger
             improvement = self.prev_dist_cp2 - dist
             if improvement > 0:
-                reward += improvement * 0.001
+                reward += improvement * 0.01
             self.prev_dist_cp2 = dist
 
+        # Living reward to encourage exploration and prevent camping in one spot, especially near the start
+        reward += 0.1
+
         # 7. CHECKPOINTS
-        LOITER_PENALTY = -0.05
+        LOITER_PENALTY = -0.1
+
+        reward += LOITER_PENALTY * (3 - len(self.visited_zones))
 
         for zone in self.checkpoints:
             z_id = zone['id']
@@ -133,9 +129,6 @@ class DoomEnvWrapper:
                     reward += zone['reward']
                     self.visited_zones.add(z_id)
                     print(f"Reached Checkpoint {z_id}!")
-                else:
-                # Subsequent visits = Small penalty to encourage progress
-                    reward += LOITER_PENALTY
 
         # 5. AUXILIARY REWARDS (Health/Ammo/Kills)
         # (Same as your original code)
@@ -152,10 +145,10 @@ class DoomEnvWrapper:
             
         kill_count = self.game.get_game_variable(GameVariable.KILLCOUNT)
         if kill_count > self.kills:
-            reward += 10.0 # Flat reward for kill is usually better than scaling
+            reward += 1.0 # Flat reward for kill is usually better than scaling
             self.kills = kill_count
             
-        reward += vizdoom_reward
+        #reward += vizdoom_reward
         
         self.prev_x = curr_x
         self.prev_y = curr_y
@@ -168,7 +161,7 @@ class DoomEnvWrapper:
         game_vars[0] /= 100.0
         game_vars[1] /= 50.0
 
-        return state, game_vars, reward / 50, done
+        return state, game_vars, reward, done
 
     def reset(self):
         self.game.new_episode()
@@ -192,10 +185,10 @@ class DoomEnvWrapper:
         return state, game_vars
 
     def preprocess(self, img):
-        # Increased resolution to 84x84
-        img = cv2.resize(img, (84, 84))
+        # Increased resolution to 42x42
+        img = cv2.resize(img, (42, 42))
         img = img.astype(np.float32) / 255.0
-        return img # Returns (84, 84)
+        return img # Returns (42, 42)
     
     def get_normalized_vars(self):
         # initialize tracked vars for the new episode

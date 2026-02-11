@@ -7,7 +7,7 @@ from A3C import A3C
 from Env import create_doom_env
 
 
-MODEL_PATH = "checkpoints/doom_a3c_ep100.pth"
+MODEL_PATH = "checkpoints/doom_a3c_ep200.pth"
 CONFIG_PATH = "speedrun.cfg"
 WAD_PATH = "doom.wad"
 EPISODES = 5
@@ -15,7 +15,7 @@ FRAME_REPEAT = 4
 STACK_SIZE = 4
 
 def preprocess(img):
-    img = cv2.resize(img, (84, 84))
+    img = cv2.resize(img, (42, 42))
     img = img.astype(np.float32) / 255.0
     return img[np.newaxis, :, :]
 
@@ -34,7 +34,7 @@ def get_action(model, state, game_vars, hidden_state, deterministic=False):
         action_idx = probs.multinomial(num_samples=1).item()
         
     actions = ["Left", "Right", "Shoot", "Forward", "Turn Left", "Turn Right", "Use"]
-    print(f"Chosen Action: {actions[action_idx]} | Probabilities: {probs.squeeze().numpy()}")
+    #print(f"Chosen Action: {actions[action_idx]} | Probabilities: {probs.squeeze().numpy()}")
 
     return action_idx, (hx, cx)
 
@@ -43,7 +43,7 @@ def main():
     # create the environment with stacked frames
     env = create_doom_env(frame_skip=FRAME_REPEAT, visible=True)
 
-    model = A3C(num_inputs=STACK_SIZE, action_space=7, input_size=84)
+    model = A3C(num_inputs=STACK_SIZE, action_space=7, input_size=42)
     
     try:
         checkpoint = torch.load(MODEL_PATH, map_location=torch.device('cpu'), weights_only=True)

@@ -38,10 +38,10 @@ class Worker(mp.Process):
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.01  # Scale factor for intrinsic reward
+        self.eta = 0.1  # Scale factor for intrinsic reward
         self.entropy_coef = 0.1  
         self.max_grad_norm = 40.0  # Gradient clipping threshold
-        self.reward_clip = 20.0  # Clip per-step rewards to [-clip, +clip]
+        self.reward_clip = 100.0  # Clip per-step rewards to [-clip, +clip]
 
     def run(self):
         # Set CPU affinity
@@ -107,7 +107,7 @@ class Worker(mp.Process):
                 action_one_hot[0, action.item()] = 1.0
 
                 with torch.no_grad():
-                     real_feat, pred_feat, _ = self.local_icm(state, next_state, action_one_hot)
+                    real_feat, pred_feat, _ = self.local_icm(state, next_state, action_one_hot)
 
                 # ICM Intrinsic reward
                 intrinsic_reward = self.eta * 0.5 * ((pred_feat - real_feat)**2).sum().item()
@@ -134,7 +134,7 @@ class Worker(mp.Process):
                     with self.lock:
                         self.global_ep.value += 1
 
-                        print(f"\nExtrinsic Reward: {extrinsic_reward:.2f} | Intrinsic Reward: {intrinsic_reward:.2f} | Total Reward: {total_reward:.2f}")
+                        print(f"\nWorker {self.name} | Episode {self.global_ep.value} | Steps: {episode_step} | Extrinsic Reward: {extrinsic_reward:.2f} | Intrinsic Reward: {intrinsic_reward:.2f} | Total Reward: {sum(rewards):.2f}")
                         
                         if self.global_ep.value % 100 == 0:
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"

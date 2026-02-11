@@ -14,7 +14,7 @@ if __name__ == '__main__':
     lr = 0.0001
     # Use 4-frame stacking (channels) and 84x84 spatial size to match rollout settings
     input_shape = 4
-    input_size = 84
+    input_size = 42
     num_actions = 7
 
     global_model = A3C(input_shape, num_actions, input_size=input_size)
@@ -32,7 +32,7 @@ if __name__ == '__main__':
     lock = mp.Lock()
 
     processes = []
-    num_processes = os.cpu_count()
+    num_processes = 6
     FRAME_SKIP = 4
     print(f"Starting training with {num_processes} workers...")
     for rank in range(num_processes):
@@ -43,17 +43,17 @@ if __name__ == '__main__':
         processes.append(p)
 
     # Progress bar to track episodes completed
-    pbar = tqdm(total=5000)
-    prev = 0
-    try:
-        while prev < 5000:
-            with lock:
-                cur = global_ep_counter.value
-            if cur > prev:
-                pbar.update(cur - prev)
-                prev = cur
-    finally:
-        pbar.close()
+    #pbar = tqdm(total=5000)
+    #prev = 0
+    #try:
+    #    while prev < 5000:
+    #        with lock:
+    #            cur = global_ep_counter.value
+    #        if cur > prev:
+    #            pbar.update(cur - prev)
+    #            prev = cur
+    #finally:
+    #    pbar.close()
 
     for p in processes:
         p.join()
