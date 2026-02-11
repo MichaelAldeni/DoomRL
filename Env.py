@@ -123,7 +123,15 @@ class DoomEnvWrapper:
             curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
             if self.prev_dist_to_goal is not None:
                 improvement = self.prev_dist_to_goal - curr_dist
-                reward += improvement * 0.02
+                reward += improvement * 0.04
+            self.prev_dist_to_goal = curr_dist
+        elif len(self.visited_zones) == 3:
+            # Guide to exit (approximate location)
+            target_x, target_y = 2912, -4768
+            curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
+            if self.prev_dist_to_goal is not None:
+                improvement = self.prev_dist_to_goal - curr_dist
+                reward += improvement * 0.04
             self.prev_dist_to_goal = curr_dist
 
         # 6. CHECKPOINTS

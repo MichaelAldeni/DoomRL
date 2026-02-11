@@ -29,15 +29,16 @@ if __name__ == '__main__':
     icm_optimizer = SharedAdam(global_icm.parameters(), lr=lr)
 
     global_ep_counter = mp.Value('i', 0)
+    global_max_reward = mp.Value('d', float('-inf'))  # Shared max reward across all workers
     lock = mp.Lock()
 
     processes = []
-    num_processes = 6
+    num_processes = os.cpu_count()
     FRAME_SKIP = 4
     print(f"Starting training with {num_processes} workers...")
     for rank in range(num_processes):
         p = Worker(global_model, optimizer, global_icm, icm_optimizer, 
-                   global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP,
+                   global_ep_counter, global_max_reward, lock, str(rank), frame_skip=FRAME_SKIP,
                    input_shape=input_shape, input_size=input_size)
         p.start()
         processes.append(p)

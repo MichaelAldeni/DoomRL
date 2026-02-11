@@ -10,7 +10,7 @@ from ICM import ICM
 from Env import create_doom_env
 
 class Worker(mp.Process):
-    def __init__(self, global_model, optimizer, global_icm, icm_optimizer, global_ep_counter, lock, name, frame_skip=4, input_shape=1, input_size=42):
+    def __init__(self, global_model, optimizer, global_icm, icm_optimizer, global_ep_counter, global_max_reward, lock, name, frame_skip=4, input_shape=1, input_size=42):
         super(Worker, self).__init__()
         self.name = name
 
@@ -18,6 +18,7 @@ class Worker(mp.Process):
         self.global_ep = global_ep_counter
         self.global_model = global_model
         self.optimizer = optimizer
+        self.global_max_reward = global_max_reward  # Shared max reward across all workers
 
         # Shared ICM model and optimizer
         self.global_icm = global_icm
@@ -150,12 +151,18 @@ class Worker(mp.Process):
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
                             print(f"\nSaved model to {save_path}")
-                        
+
+                        if episode_reward > self.global_max_reward.value:
+                            self.global_max_reward.value = episode_reward
+                            save_path = f"best/doom_a3c.pth"
+                            torch.save(self.global_model.state_dict(), save_path)
+                            print(f"\nSaved best model to {save_path} at episode {self.global_ep.value} with reward {self.global_max_reward.value:.2f}")
+
                         # Print action distribution every 50 episodes to detect collapse
-                        if self.global_ep.value % 50 == 0:
-                            action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
-                            action_dist = {action_names[i]: action_counts[i] for i in range(7)}
-                            print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
+                        #if self.global_ep.value % 50 == 0:
+                        #    action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
+                        #    action_dist = {action_names[i]: action_counts[i] for i in range(7)}
+                        #    print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
                     
                     state, game_vars = self.env.reset()
                     state = torch.from_numpy(state).float().unsqueeze(0)
