@@ -7,7 +7,7 @@ from A3C import A3C
 from Env import create_doom_env
 
 
-MODEL_PATH = "checkpoints/doom_a3c_ep200.pth"
+MODEL_PATH = "checkpoints/doom_a3c_ep1500.pth"
 CONFIG_PATH = "speedrun.cfg"
 WAD_PATH = "doom.wad"
 EPISODES = 5
@@ -69,7 +69,7 @@ def main():
 
         while not done:
             action_idx, (hx, cx) = get_action(model, state, game_vars, (hx, cx))
-            state, game_vars, reward, done = env.step(action_idx)
+            state, game_vars, reward, _, done = env.step(action_idx)
             total_reward += reward
             time.sleep(0.02)
             step += 1
