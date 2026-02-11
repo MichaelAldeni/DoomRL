@@ -36,7 +36,7 @@ class Worker(mp.Process):
         # local model must match global model input channels and spatial size
         self.local_model = A3C(num_inputs=input_shape, action_space=7, input_size=input_size)
         self.gamma = 0.99
-        self.t_max = 20
+        self.t_max = 40
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
@@ -77,7 +77,7 @@ class Worker(mp.Process):
         episode_intrinsic = 0
         action_counts = [0] * 7
 
-        while self.global_ep.value <= 5000:
+        while self.global_ep.value <= 10000:
                 
             self.local_model.load_state_dict(self.global_model.state_dict())
             self.local_icm.load_state_dict(self.global_icm.state_dict())
@@ -150,19 +150,23 @@ class Worker(mp.Process):
                         if self.global_ep.value % 100 == 0:
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
-                            print(f"\nSaved model to {save_path}")
+                            icm_save_path = f"checkpoints/doom_icm_ep{self.global_ep.value}.pth"
+                            torch.save(self.global_icm.state_dict(), icm_save_path)
+                            print(f"\nSaved model to {save_path} and {icm_save_path}")
 
                         if episode_reward > self.global_max_reward.value:
                             self.global_max_reward.value = episode_reward
                             save_path = f"best/doom_a3c.pth"
                             torch.save(self.global_model.state_dict(), save_path)
-                            print(f"\nSaved best model to {save_path} at episode {self.global_ep.value} with reward {self.global_max_reward.value:.2f}")
+                            icm_save_path = f"best/doom_icm.pth"
+                            torch.save(self.global_icm.state_dict(), icm_save_path)
+                            print(f"\nSaved best model to {save_path} and {icm_save_path} at episode {self.global_ep.value} with reward {self.global_max_reward.value:.2f}")
 
                         # Print action distribution every 50 episodes to detect collapse
-                        #if self.global_ep.value % 50 == 0:
-                        #    action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
-                        #    action_dist = {action_names[i]: action_counts[i] for i in range(7)}
-                        #    print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
+                        if self.global_ep.value % 50 == 0:
+                            action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
+                            action_dist = {action_names[i]: action_counts[i] for i in range(7)}
+                            print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
                     
                     state, game_vars = self.env.reset()
                     state = torch.from_numpy(state).float().unsqueeze(0)
@@ -222,7 +226,7 @@ class Worker(mp.Process):
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
             # Decaying entropy coefficient: start 0.15 down to min 0.05 over 3000 episodes (slower decay to maintain exploration)
-            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 3000.0) * 0.10)
+            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 8000.0) * 0.10)
             a3c_loss = policy_loss + 1.0 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)
