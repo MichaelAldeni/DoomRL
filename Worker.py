@@ -39,7 +39,7 @@ class Worker(mp.Process):
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.001  # Scale factor for intrinsic reward
+        self.eta = 0.0001  # Scale factor for intrinsic reward (reduced to prevent circular exploration)
         self.entropy_coef = 0.1  
         self.max_grad_norm = 40.0  # Gradient clipping threshold
         self.reward_clip = 100.0  # Clip per-step rewards to [-clip, +clip]
@@ -214,9 +214,9 @@ class Worker(mp.Process):
             # Backpropagate combined loss
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
-            # Decaying entropy coefficient: start 0.1 down to min 0.01 over 2000 episodes
-            current_entropy = max(0.01, 0.1 - (float(self.global_ep.value) / 2000.0) * 0.09)
-            a3c_loss = policy_loss + 0.5 * value_loss - current_entropy * entropy_loss
+            # Decaying entropy coefficient: start 0.15 down to min 0.05 over 3000 episodes (slower decay to maintain exploration)
+            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 3000.0) * 0.10)
+            a3c_loss = policy_loss + 1.0 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)
             
