@@ -26,15 +26,28 @@ def weights_init(m):
         m.bias.data.fill_(0)
 
 class A3C(nn.Module):
-    def __init__(self, num_inputs, action_space):
+    def __init__(self, num_inputs, action_space, input_size: int = 42):
         super(A3C, self).__init__()
-        
+
         self.conv1 = nn.Conv2d(num_inputs, 32, 3, stride=2, padding=1)
         self.conv2 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
         self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-        self.feature_size = 32 * 3 * 3 
-        self.lstm = nn.LSTMCell(self.feature_size, 256)
+
+        # Infer feature_size by forwarding a dummy tensor through convs
+        with torch.no_grad():
+            dummy = torch.zeros(1, num_inputs, input_size, input_size)
+            x = F.elu(self.conv1(dummy))
+            x = F.elu(self.conv2(x))
+            x = F.elu(self.conv3(x))
+            x = F.elu(self.conv4(x))
+            self.feature_size = x.view(1, -1).size(1)
+
+        self.var_embedding = nn.Linear(2, 32)  # For health and ammo
+
+        # LSTM will receive visual features + embedded game variables
+        self.var_emb_size = 32
+        self.lstm = nn.LSTMCell(self.feature_size + self.var_emb_size, 256)
         self.critic_linear = nn.Linear(256, 1)
         self.actor_linear = nn.Linear(256, action_space)
         self.apply(weights_init)
@@ -42,22 +55,27 @@ class A3C(nn.Module):
         self.actor_linear.weight.data = normalized_columns_initializer(
             self.actor_linear.weight.data, 0.01)
         self.actor_linear.bias.data.fill_(0)
-        
+
         self.critic_linear.weight.data = normalized_columns_initializer(
             self.critic_linear.weight.data, 1.0)
         self.critic_linear.bias.data.fill_(0)
-        
+
         self.lstm.bias_ih.data.fill_(0)
         self.lstm.bias_hh.data.fill_(0)
 
         self.train()
 
-    def forward(self, inputs, hidden_state):
+    def forward(self, inputs, game_vars, hidden_state):
         x = F.elu(self.conv1(inputs))
         x = F.elu(self.conv2(x))
         x = F.elu(self.conv3(x))
         x = F.elu(self.conv4(x))
         x = x.view(-1, self.feature_size)
+        # embed game variables and concat to visual features
+        # expect `game_vars` shape: (batch, 2)
+        var_emb = F.elu(self.var_embedding(game_vars))
+        x = torch.cat([x, var_emb], dim=1)
+
         hx, cx = self.lstm(x, hidden_state)
         value = self.critic_linear(hx)
         logit = self.actor_linear(hx)

@@ -9,7 +9,7 @@ from ICM import ICM
 from Env import create_doom_env
 
 class Worker(mp.Process):
-    def __init__(self, global_model, optimizer, global_icm, icm_optimizer, global_ep_counter, lock, name, frame_skip=4):
+    def __init__(self, global_model, optimizer, global_icm, icm_optimizer, global_ep_counter, lock, name, frame_skip=4, input_shape=1, input_size=42):
         super(Worker, self).__init__()
         self.name = name
 
@@ -21,21 +21,27 @@ class Worker(mp.Process):
         # Shared ICM model and optimizer
         self.global_icm = global_icm
         self.icm_optimizer = icm_optimizer
-        self.local_icm = ICM(num_inputs=1, action_space=8)
+        # local ICM uses same input channels and feature size as global_icm
+        try:
+            feature_size = getattr(self.global_icm, 'feature_size')
+        except Exception:
+            feature_size = None
+        self.local_icm = ICM(num_inputs=input_shape, action_space=7, feature_size=feature_size if feature_size is not None else 288)
 
         self.lock = lock
         self.frame_skip = int(frame_skip)
         
-        self.local_model = A3C(num_inputs=1, action_space=8)
+        # local model must match global model input channels and spatial size
+        self.local_model = A3C(num_inputs=input_shape, action_space=7, input_size=input_size)
         self.gamma = 0.99
         self.t_max = 20
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.05  # Scale factor for intrinsic reward
-        self.entropy_coef = 0.1  # Entropy coefficient
-        self.max_grad_norm = 10.0  # Gradient clipping threshold
-        self.reward_clip = 200.0  # Clip per-step rewards to [-clip, +clip]
+        self.eta = 0.01  # Scale factor for intrinsic reward
+        self.entropy_coef = 0.1  
+        self.max_grad_norm = 40.0  # Gradient clipping threshold
+        self.reward_clip = 20.0  # Clip per-step rewards to [-clip, +clip]
 
     def run(self):
         # Set CPU affinity
@@ -59,8 +65,9 @@ class Worker(mp.Process):
         hx = torch.zeros(1, 256)
         cx = torch.zeros(1, 256)
         
-        state = self.env.reset()
+        state, game_vars = self.env.reset()
         state = torch.from_numpy(state).float().unsqueeze(0)
+        game_vars_tensor = torch.from_numpy(game_vars).float().unsqueeze(0)
         
         episode_step = 0
 
@@ -85,17 +92,18 @@ class Worker(mp.Process):
             icm_actions_indices = []
 
             for _ in range(self.t_max):
-                value, logit, (hx, cx) = self.local_model(state, (hx, cx))
+                value, logit, (hx, cx) = self.local_model(state, game_vars_tensor, (hx, cx))
                 probs = F.softmax(logit, dim=1)
                 m = Categorical(probs)
                 action = m.sample()
                 #print(f"Worker {self.name} Step {worker_step} | Action: {action.item()} | Probabilities: {probs.squeeze().detach().cpu().numpy()}")
                 
-                next_state_np, extrinsic_reward, done = self.env.step(action.item())
+                next_state_np, next_game_vars, extrinsic_reward, done = self.env.step(action.item())
                 next_state = torch.from_numpy(next_state_np).float().unsqueeze(0)
+                next_game_vars_tensor = torch.from_numpy(next_game_vars).float().unsqueeze(0)
 
                 # ICM intrinsic reward calculation
-                action_one_hot = torch.zeros(1, 8)
+                action_one_hot = torch.zeros(1, 7)
                 action_one_hot[0, action.item()] = 1.0
 
                 with torch.no_grad():
@@ -126,7 +134,7 @@ class Worker(mp.Process):
                     with self.lock:
                         self.global_ep.value += 1
 
-                        #print(f"\nExtrinsic Reward: {extrinsic_reward:.2f} | Intrinsic Reward: {intrinsic_reward:.2f} | Total Reward: {total_reward:.2f}")
+                        print(f"\nExtrinsic Reward: {extrinsic_reward:.2f} | Intrinsic Reward: {intrinsic_reward:.2f} | Total Reward: {total_reward:.2f}")
                         
                         if self.global_ep.value % 100 == 0:
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
@@ -135,24 +143,26 @@ class Worker(mp.Process):
                         
                         # Print action distribution every 50 episodes to detect collapse
                         if self.global_ep.value % 50 == 0:
-                            action_names = ["Left", "Right", "Shoot", "Forward", "Back", "TurnL", "TurnR", "Use"]
-                            action_dist = {action_names[i]: action_counts[i] for i in range(8)}
+                            action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
+                            action_dist = {action_names[i]: action_counts[i] for i in range(7)}
                             print(f"\nEp {self.global_ep.value} Worker {self.name} | Steps: {episode_step} | Actions: {action_dist}")
                     
-                    state = self.env.reset()
+                    state, game_vars = self.env.reset()
                     state = torch.from_numpy(state).float().unsqueeze(0)
+                    game_vars_tensor = torch.from_numpy(game_vars).float().unsqueeze(0)
                     hx = torch.zeros(1, 256)
                     cx = torch.zeros(1, 256)
                     
                     episode_step = 0
-                    action_counts = [0] * 8
+                    action_counts = [0] * 7
                     break
                 else:
                     state = next_state
+                    game_vars_tensor = next_game_vars_tensor
             
             R = torch.zeros(1, 1)
             if not done:
-                value, _, _ = self.local_model(state, (hx, cx))
+                value, _, _ = self.local_model(state, game_vars_tensor, (hx, cx))
                 R = value.detach()
 
             values.append(R)
@@ -189,7 +199,9 @@ class Worker(mp.Process):
             # Backpropagate combined loss
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
-            a3c_loss = policy_loss + 0.5 * value_loss - self.entropy_coef * entropy_loss
+            # Decaying entropy coefficient: start 0.1 down to min 0.01 over 2000 episodes
+            current_entropy = max(0.01, 0.1 - (float(self.global_ep.value) / 2000.0) * 0.09)
+            a3c_loss = policy_loss + 0.5 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)
             

@@ -3,26 +3,28 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import cv2
-from vizdoom import DoomGame, ScreenFormat, ScreenResolution, Mode, GameVariable
 from A3C import A3C
+from Env import create_doom_env
 
 
-MODEL_PATH = "checkpoints/doom_a3c_ep600.pth"
+MODEL_PATH = "checkpoints/doom_a3c_ep100.pth"
 CONFIG_PATH = "speedrun.cfg"
 WAD_PATH = "doom.wad"
 EPISODES = 5
 FRAME_REPEAT = 4
+STACK_SIZE = 4
 
 def preprocess(img):
-    img = cv2.resize(img, (42, 42))
+    img = cv2.resize(img, (84, 84))
     img = img.astype(np.float32) / 255.0
     return img[np.newaxis, :, :]
 
-def get_action(model, state, hidden_state, deterministic=False):
+def get_action(model, state, game_vars, hidden_state, deterministic=False):
     state_tensor = torch.from_numpy(state).float().unsqueeze(0)
+    vars_tensor = torch.from_numpy(game_vars).float().unsqueeze(0)
     
     with torch.no_grad():
-        _, logit, (hx, cx) = model(state_tensor, hidden_state)
+        _, logit, (hx, cx) = model(state_tensor, vars_tensor, hidden_state)
     
     probs = F.softmax(logit, dim=1)
     
@@ -31,21 +33,17 @@ def get_action(model, state, hidden_state, deterministic=False):
     else:
         action_idx = probs.multinomial(num_samples=1).item()
         
-    actions = ["Left", "Right", "Shoot", "Forward", "Backward", "Turn Left", "Turn Right", "Use"]
+    actions = ["Left", "Right", "Shoot", "Forward", "Turn Left", "Turn Right", "Use"]
     print(f"Chosen Action: {actions[action_idx]} | Probabilities: {probs.squeeze().numpy()}")
 
     return action_idx, (hx, cx)
 
 def main():
     print(f"Loading model from: {MODEL_PATH}")
-    
-    game = DoomGame()
-    game.load_config(CONFIG_PATH)
-    game.set_screen_resolution(ScreenResolution.RES_640X480)
-    game.set_window_visible(True)    
-    game.init()
+    # create the environment with stacked frames
+    env = create_doom_env(frame_skip=FRAME_REPEAT, visible=True)
 
-    model = A3C(num_inputs=1, action_space=8)
+    model = A3C(num_inputs=STACK_SIZE, action_space=7, input_size=84)
     
     try:
         checkpoint = torch.load(MODEL_PATH, map_location=torch.device('cpu'), weights_only=True)
@@ -59,28 +57,33 @@ def main():
         print(f"Error: Could not find file {MODEL_PATH}")
         return
 
-    actions = np.eye(8, dtype=np.uint8).tolist()
+    actions = np.eye(7, dtype=np.uint8).tolist()
 
     for ep in range(EPISODES):
-        game.new_episode()
+        state, game_vars = env.reset()
         hx = torch.zeros(1, 256)
         cx = torch.zeros(1, 256)
         step = 0
         total_reward = 0
-        
-        while not game.is_episode_finished():
-            state_raw = game.get_state().screen_buffer
-            state = preprocess(state_raw)
-            action_idx, (hx, cx) = get_action(model, state, (hx, cx))
-            reward = game.make_action(actions[action_idx], FRAME_REPEAT)
+        done = False
+
+        while not done:
+            action_idx, (hx, cx) = get_action(model, state, game_vars, (hx, cx))
+            state, game_vars, reward, done = env.step(action_idx)
             total_reward += reward
-            time.sleep(0.02) 
+            time.sleep(0.02)
             step += 1
 
         print(f"Episode {ep+1} Finished. Total Reward: {total_reward}")
         time.sleep(1)
 
-    game.close()
+    try:
+        if hasattr(env, "game"):
+            env.game.close()
+        else:
+            env.close()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()

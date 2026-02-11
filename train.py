@@ -12,13 +12,17 @@ if __name__ == '__main__':
     os.environ["OMP_NUM_THREADS"] = "1"
     
     lr = 0.0001
-    input_shape = 1 
-    num_actions = 8
+    # Use 4-frame stacking (channels) and 84x84 spatial size to match rollout settings
+    input_shape = 4
+    input_size = 84
+    num_actions = 7
 
-    global_model = A3C(input_shape, num_actions)
+    global_model = A3C(input_shape, num_actions, input_size=input_size)
     global_model.share_memory()
 
-    global_icm = ICM(input_shape, num_actions)
+    # ICM should use the same input channels; set its feature_size to match the model
+    feature_size = global_model.feature_size
+    global_icm = ICM(input_shape, num_actions, feature_size=feature_size)
     global_icm.share_memory()
 
     optimizer = SharedAdam(global_model.parameters(), lr=lr)
@@ -33,7 +37,8 @@ if __name__ == '__main__':
     print(f"Starting training with {num_processes} workers...")
     for rank in range(num_processes):
         p = Worker(global_model, optimizer, global_icm, icm_optimizer, 
-                   global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP)
+                   global_ep_counter, lock, str(rank), frame_skip=FRAME_SKIP,
+                   input_shape=input_shape, input_size=input_size)
         p.start()
         processes.append(p)
 
