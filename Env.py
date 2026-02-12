@@ -59,6 +59,7 @@ class DoomEnvWrapper:
                 reward -= 5.0 # Timeout penalty
             else:
                 reward += 500.0 # Success
+                print("Successfully completed the episode!")
             # return last known game vars (normalized) to keep return signature consistent
             try:
                 health = float(self.health)

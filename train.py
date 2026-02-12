@@ -43,6 +43,9 @@ if __name__ == '__main__':
     global_max_reward = mp.Value('d', float('-inf'))  # Shared max reward across all workers
     lock = mp.Lock()
 
+    with open("training_log.csv", "w") as log_file:
+        log_file.write("Episode, Worker, Step, Last zone, Extrinsic Reward, Intrinsic Reward, Total Reward\n")
+
     # Load checkpoint if provided
     if args.checkpoint:
         if os.path.exists(args.checkpoint):

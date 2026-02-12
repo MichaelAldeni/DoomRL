@@ -147,6 +147,9 @@ class Worker(mp.Process):
 
                         print(f"\nWorker {self.name} | Episode {self.global_ep.value} | Steps: {episode_step} | Last Zone: {last} | Extrinsic: {episode_extrinsic:.2f} | Intrinsic: {episode_intrinsic:.2f} | Total: {episode_reward:.2f}")
                         
+                        with open("training_log.csv", "a") as log_file:
+                            log_file.write(f"{self.global_ep.value},{self.name},{episode_step},{last},{episode_extrinsic:.2f},{episode_intrinsic:.2f},{episode_reward:.2f}\n")
+
                         if self.global_ep.value % 100 == 0:
                             save_path = f"checkpoints/doom_a3c_ep{self.global_ep.value}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
@@ -156,9 +159,9 @@ class Worker(mp.Process):
 
                         if episode_reward > self.global_max_reward.value:
                             self.global_max_reward.value = episode_reward
-                            save_path = f"best/doom_a3c.pth"
+                            save_path = f"best/doom_a3c_{self.global_max_reward.value:.2f}.pth"
                             torch.save(self.global_model.state_dict(), save_path)
-                            icm_save_path = f"best/doom_icm.pth"
+                            icm_save_path = f"best/doom_icm_{self.global_max_reward.value:.2f}.pth"
                             torch.save(self.global_icm.state_dict(), icm_save_path)
                             print(f"\nSaved best model to {save_path} and {icm_save_path} at episode {self.global_ep.value} with reward {self.global_max_reward.value:.2f}")
 
