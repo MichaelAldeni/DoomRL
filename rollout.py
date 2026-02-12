@@ -8,6 +8,7 @@ from Env import create_doom_env
 
 
 MODEL_PATH = "checkpoints/doom_a3c_ep5000.pth"
+# MODEL_PATH = "best/doom_a3c.pth" 
 CONFIG_PATH = "speedrun.cfg"
 WAD_PATH = "doom.wad"
 EPISODES = 5
