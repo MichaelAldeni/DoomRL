@@ -36,14 +36,14 @@ class Worker(mp.Process):
         # local model must match global model input channels and spatial size
         self.local_model = A3C(num_inputs=input_shape, action_space=7, input_size=input_size)
         self.gamma = 0.99
-        self.t_max = 20
+        self.t_max = 40 # Channged from 20 to 40 to allow longer rollouts and more stable updates
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.0001  # Scale factor for intrinsic reward (reduced to prevent circular exploration)
+        self.eta = 0.001  # Scale factor for intrinsic reward (increased to push beyond zone 2)
         self.entropy_coef = 0.1  
         self.max_grad_norm = 40.0  # Gradient clipping threshold
-        self.reward_clip = 100.0  # Clip per-step rewards to [-clip, +clip]
+        self.reward_clip = 200.0  # Clip per-step rewards to [-clip, +clip]
 
     def run(self):
         # Set CPU affinity
@@ -225,8 +225,8 @@ class Worker(mp.Process):
             # Backpropagate combined loss
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
-            # Decaying entropy coefficient: start 0.15 down to min 0.05 over 15000 episodes (slower decay to maintain exploration)
-            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 15000.0) * 0.10)
+            # Decaying entropy coefficient: start 0.15 down to min 0.01 over 14000 episodes (maintain exploration longer)
+            current_entropy = max(0.01, 0.15 - (float(self.global_ep.value) / 14000.0) * 0.14)
             a3c_loss = policy_loss + 1.0 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)

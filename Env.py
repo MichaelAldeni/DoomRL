@@ -29,9 +29,9 @@ class DoomEnvWrapper:
 
         # E1M1 Checkpoints
         self.checkpoints = [
-            {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 100.0, 'target': (1616, -2496)},
-            {'id': 2, 'coords': (2624, -2560, 2752, -2784), 'reward': 200.0, 'target': (2688, -2672)},
-            {'id': 3, 'coords': (2912, -4864, 3104, -4672), 'reward': 300.0, 'target': (3008, -4768)}
+            {'id': 1, 'coords': (1568, -2560, 1664, -2432), 'reward': 50.0, 'target': (1616, -2496)},
+            {'id': 2, 'coords': (2624, -2560, 2752, -2784), 'reward': 100.0, 'target': (2688, -2672)},
+            {'id': 3, 'coords': (2912, -4864, 3104, -4672), 'reward': 200.0, 'target': (3008, -4768)}
         ]
         self.visited_zones = set()
         self.prev_dist_to_goal = None
@@ -89,16 +89,16 @@ class DoomEnvWrapper:
         # 1. REMOVED: Euclidean Distance Reward (It confuses the agent in mazes)
         
         # 2. MOVEMENT REWARD
-        travel_dist = calculate_distance(curr_x, curr_y, self.prev_x, self.prev_y)
-        if travel_dist > 5:
-            reward += travel_dist * 0.02
-        else:
-            # 3. STUCK PENALTY
-            if action_idx in [0, 1, 3]:
-                reward -= 0.005
+        # travel_dist = calculate_distance(curr_x, curr_y, self.prev_x, self.prev_y)
+        # if travel_dist > 5:
+        #     reward += travel_dist * 0.02
+        # else:
+        #     # 3. STUCK PENALTY
+        #     if action_idx in [0, 1, 3]:
+        #         reward -= 0.005
 
-        # 4. TIME-STEP REWARD (small positive baseline)
-        reward += 0.005
+        # 4. TIME-STEP REWARD (small positive baseline, reduced to discourage staying)
+        reward += 0.001
         
         # 5. DIRECTIONAL GUIDANCE toward next checkpoint
         if len(self.visited_zones) == 0:
@@ -118,12 +118,12 @@ class DoomEnvWrapper:
                 reward += improvement * 0.02
             self.prev_dist_to_goal = curr_dist
         elif len(self.visited_zones) == 2:
-            # Guide to checkpoint 3
+            # Guide to checkpoint 3 (stronger incentive)
             target_x, target_y = self.checkpoints[2]['target']
             curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
             if self.prev_dist_to_goal is not None:
                 improvement = self.prev_dist_to_goal - curr_dist
-                reward += improvement * 0.04
+                reward += improvement * 0.08  # Doubled from 0.04
             self.prev_dist_to_goal = curr_dist
         elif len(self.visited_zones) == 3:
             # Guide to exit (approximate location)
@@ -131,7 +131,7 @@ class DoomEnvWrapper:
             curr_dist = calculate_distance(curr_x, curr_y, target_x, target_y)
             if self.prev_dist_to_goal is not None:
                 improvement = self.prev_dist_to_goal - curr_dist
-                reward += improvement * 0.04
+                reward += improvement * 0.08
             self.prev_dist_to_goal = curr_dist
 
         # 6. CHECKPOINTS
@@ -160,7 +160,7 @@ class DoomEnvWrapper:
             
         kill_count = self.game.get_game_variable(GameVariable.KILLCOUNT)
         if kill_count > self.kills:
-            reward += 2.0
+            reward += 5.0
             self.kills = kill_count
         
         self.prev_x = curr_x

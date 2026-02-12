@@ -22,7 +22,7 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True) 
     os.environ["OMP_NUM_THREADS"] = "1"
     
-    lr = 0.00005  # Reduced from 0.0001 to prevent policy collapse
+    lr = 0.00006  # Increased for t_max=40 and 8 workers
     # Use 4-frame stacking (channels) and 84x84 spatial size to match rollout settings
     input_shape = 4
     input_size = 42
