@@ -221,8 +221,8 @@ class Worker(mp.Process):
             # Backpropagate combined loss
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
-            # Decaying entropy coefficient: start 0.15 down to min 0.05 over 3000 episodes (slower decay to maintain exploration)
-            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 3000.0) * 0.10)
+            # Decaying entropy coefficient: start 0.15 down to min 0.05 over 5000 episodes (slower decay to maintain exploration)
+            current_entropy = max(0.05, 0.15 - (float(self.global_ep.value) / 5000.0) * 0.10)
             a3c_loss = policy_loss + 1.0 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.local_model.parameters(), self.max_grad_norm)
