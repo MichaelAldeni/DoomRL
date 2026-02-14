@@ -71,8 +71,7 @@ class A3C(nn.Module):
         x = F.elu(self.conv3(x))
         x = F.elu(self.conv4(x))
         x = x.view(-1, self.feature_size)
-        # embed game variables and concat to visual features
-        # expect `game_vars` shape: (batch, 2)
+        
         var_emb = F.elu(self.var_embedding(game_vars))
         x = torch.cat([x, var_emb], dim=1)
 

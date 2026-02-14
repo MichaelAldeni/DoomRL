@@ -18,12 +18,11 @@ class Worker(mp.Process):
         self.global_ep = global_ep_counter
         self.global_model = global_model
         self.optimizer = optimizer
-        self.global_max_reward = global_max_reward  # Shared max reward across all workers
+        self.global_max_reward = global_max_reward
 
         # Shared ICM model and optimizer
         self.global_icm = global_icm
         self.icm_optimizer = icm_optimizer
-        # local ICM uses same input channels and feature size as global_icm
         try:
             feature_size = getattr(self.global_icm, 'feature_size')
         except Exception:
@@ -33,20 +32,18 @@ class Worker(mp.Process):
         self.lock = lock
         self.frame_skip = int(frame_skip)
         
-        # local model must match global model input channels and spatial size
         self.local_model = A3C(num_inputs=input_shape, action_space=7, input_size=input_size)
-        self.gamma = 0.99
-        self.t_max = 40 # Channged from 20 to 40 to allow longer rollouts and more stable updates
+        self.gamma = 0.99 # Discount factor for rewards
+        self.t_max = 40 # Steps per update
 
         self.beta = 0.2  # Weight for forward model loss
         self.lambda_icm = 0.1  # Weight for inverse model loss
-        self.eta = 0.001  # Scale factor for intrinsic reward (increased to push beyond zone 2)
-        self.entropy_coef = 0.1  
+        self.eta = 0.001  # Scale factor for intrinsic reward
+        self.entropy_coef = 0.1  # Entropy coefficient for exploration
         self.max_grad_norm = 40.0  # Gradient clipping threshold
         self.reward_clip = 200.0  # Clip per-step rewards to [-clip, +clip]
 
     def run(self):
-        # Set CPU affinity
         try:
             import psutil
             cpu_count = os.cpu_count() or 1
@@ -115,17 +112,15 @@ class Worker(mp.Process):
                 # ICM Intrinsic reward
                 intrinsic_reward = self.eta * 0.5 * ((pred_feat - real_feat)**2).sum().item()
 
-                # Total reward is extrinsic + intrinsic, clipped to prevent advantage spikes
+                # Total reward = extrinsic + intrinsic
                 total_reward = max(min(extrinsic_reward + intrinsic_reward, self.reward_clip), -self.reward_clip)
                 
-                # Track separately for logging
                 episode_extrinsic += extrinsic_reward
                 episode_intrinsic += intrinsic_reward
 
                 icm_states.append(state)
                 icm_next_states.append(next_state)
                 icm_actions_onehot.append(action_one_hot)
-                # store action as a 1-d tensor so torch.cat produces a proper target vector
                 icm_actions_indices.append(action.unsqueeze(0))
 
                 values.append(value)
@@ -133,9 +128,6 @@ class Worker(mp.Process):
                 rewards.append(total_reward)
                 entropies.append(m.entropy())
                 episode_reward += total_reward
-
-                #print(f"Step {episode_step} | Action: {action.item()} | Extrinsic: {extrinsic_reward:.2f} | Intrinsic: {intrinsic_reward:.2f} | Total: {total_reward:.2f}")
-                #sleep(0.01)  # Small sleep to slow down logging for readability
                 
                 worker_step += 1
                 episode_step += 1
@@ -165,7 +157,6 @@ class Worker(mp.Process):
                             torch.save(self.global_icm.state_dict(), icm_save_path)
                             print(f"\nSaved best model to {save_path} and {icm_save_path} at episode {self.global_ep.value} with reward {self.global_max_reward.value:.2f}")
 
-                        # Print action distribution every 50 episodes to detect collapse
                         if self.global_ep.value % 50 == 0:
                             action_names = ["Left", "Right", "Shoot", "Forward", "TurnL", "TurnR", "Use"]
                             action_dist = {action_names[i]: action_counts[i] for i in range(7)}
@@ -195,10 +186,7 @@ class Worker(mp.Process):
             values.append(R)
             policy_loss = 0
             value_loss = 0
-            
-            # A3C Loss calculation
-            # Note: 'rewards' contains only the rewards from the current n_steps batch.
-            # Past rewards were handled in previous updates. Future rewards are approx by R(bootstrap).
+        
             n_steps = len(rewards)
             for i in reversed(range(n_steps)):
                 R = rewards[i] + self.gamma * R
@@ -206,7 +194,6 @@ class Worker(mp.Process):
                 value_loss = value_loss + advantage.pow(2)
                 policy_loss = policy_loss - (log_probs[i] * advantage.detach())
             
-            # Normalize by rollout length so gradient magnitude is consistent
             policy_loss = policy_loss / n_steps
             value_loss = value_loss / n_steps
 
@@ -218,17 +205,15 @@ class Worker(mp.Process):
 
             real_feat, pred_feat, pred_action_logits = self.local_icm(batch_state, batch_next_state, batch_action_onehot)
 
-            # Forward Loss: || phi(s') - pred_phi(s') ||^2
+            # Forward Loss: 1/2 || phi(s') - pred_phi(s') ||^2
             forward_loss = 0.5 * F.mse_loss(pred_feat, real_feat.detach(), reduction='sum') / len(rewards)
 
             # Inverse Loss
             inverse_loss = F.cross_entropy(pred_action_logits, batch_action_indices.view(-1), reduction='mean')
             icm_loss = ((self.beta * forward_loss) + ((1 - self.beta) * inverse_loss)) * self.lambda_icm
             
-            # Backpropagate combined loss
             self.optimizer.zero_grad()
             entropy_loss = sum(entropies) / len(entropies)
-            # Decaying entropy coefficient: start 0.15 down to min 0.01 over 14000 episodes (maintain exploration longer)
             current_entropy = max(0.01, 0.15 - (float(self.global_ep.value) / 14000.0) * 0.14)
             a3c_loss = policy_loss + 1.0 * value_loss - current_entropy * entropy_loss
             a3c_loss.backward()

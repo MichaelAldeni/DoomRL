@@ -7,7 +7,7 @@ from A3C import A3C
 from Env import create_doom_env
 
 
-MODEL_PATH = "checkpoints/doom_a3c_ep5000.pth"
+MODEL_PATH = "checkpoints/doom_a3c_ep20000.pth"
 # MODEL_PATH = "best/doom_a3c.pth" 
 CONFIG_PATH = "speedrun.cfg"
 WAD_PATH = "doom.wad"
@@ -41,7 +41,6 @@ def get_action(model, state, game_vars, hidden_state, deterministic=False):
 
 def main():
     print(f"Loading model from: {MODEL_PATH}")
-    # create the environment with stacked frames
     env = create_doom_env(frame_skip=FRAME_REPEAT, visible=True)
 
     model = A3C(num_inputs=STACK_SIZE, action_space=7, input_size=42)
